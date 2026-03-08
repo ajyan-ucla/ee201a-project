@@ -28,6 +28,22 @@ def simulator_simulate(
     - Keep units consistent. The repo appears to use mm for geometry.
     """
 
+    # Input validation
+    if not boxes or len(boxes) == 0:
+        print("Warning: No boxes provided to simulator")
+        return {}
+    
+    if not bonding_box_list:
+        bonding_box_list = []
+    if not TIM_boxes:
+        TIM_boxes = []
+    
+    all_boxes = list(boxes) + list(bonding_box_list) + list(TIM_boxes)
+    
+    if len(all_boxes) == 0:
+        print("Warning: No thermal boxes found")
+        return {}
+
     # ------------------------------------------------------------------
     # 0) Collect all thermal solids that should appear in the grid
     # ------------------------------------------------------------------
@@ -170,7 +186,19 @@ def simulator_simulate(
     # T is temperature rise or absolute temperature depending on your setup.
     # Here, because ambient is stamped directly into b, T solves to absolute degC.
     # ------------------------------------------------------------------
-    T = np.linalg.solve(G, b)
+    try:
+    cond_number = np.linalg.cond(G)
+    if cond_number > 1e15:
+        print(f"Warning: Matrix condition number is high ({cond_number:.2e}), results may be inaccurate")
+    except:
+        pass
+    
+    # Solve the system
+    try:
+        T = np.linalg.solve(G, b)
+    except np.linalg.LinAlgError:
+        print("Error: Could not solve thermal matrix (singular)")
+        T = np.full(n_nodes, T_amb)
 
     # ------------------------------------------------------------------
     # 9) Postprocess box temperatures
@@ -228,27 +256,101 @@ def find_containing_box_index(all_boxes, x, y, z):
 
 def effective_box_conductivity(box, layers):
     """
-    Return one effective isotropic thermal conductivity for this box.
-
-    Start simple:
-    - map by name/material/stackup keywords
-    - later improve using actual layer stackup parsing
+    Extract effective thermal conductivity from box stackup.
+    
+    Stackup format: "N:layer_name,M:layer_name2"
+    Example: "1:5nm_active,2:5nm_advanced_metal"
+    
+    Returns effective k considering all layers in series.
     """
-    name = box.name.lower()
-    stack = str(box.stackup).lower() if hasattr(box, "stackup") else ""
-
-    if "tim" in name or "tim" in stack:
-        return 5.0
-    if "bond" in name:
-        return 20.0
-    if "interposer" in name:
-        return 30.0
-    if "hbm" in name:
+    if layers is None or not hasattr(box, 'stackup') or not box.stackup:
+        # Fallback: guess from name
+        name_lower = box.name.lower()
+        if "gpu" in name_lower or "hbm" in name_lower:
+            return 105.0  # Si
+        elif "tim" in name_lower:
+            return 100.0  # TIM
+        elif "bond" in name_lower:
+            return 36.0   # SnPb solder
+        else:
+            return 10.0   # generic
+    
+    # Import conductivity dictionary
+    from therm import conductivity_values
+    
+    # Parse stackup string: split by comma
+    try:
+        stackup_specs = str(box.stackup).split(",")
+    except:
         return 10.0
-    if "gpu" in name:
-        return 100.0
-
-    return 10.0
+    
+    # Collect all layer names with their thicknesses
+    total_resistance = 0.0  # K / W (for 1 mm^2 cross-section)
+    total_thickness = 0.0   # mm
+    
+    for spec in stackup_specs:
+        spec = spec.strip()
+        if ":" not in spec:
+            continue
+        
+        try:
+            # Parse "N:layer_name"
+            num_str, layer_name = spec.split(":")
+            num_layers = int(num_str)
+            layer_name = layer_name.strip()
+        except:
+            continue
+        
+        # Find layer in layers list
+        layer_obj = None
+        if isinstance(layers, list):
+            for layer in layers:
+                if hasattr(layer, 'get_name') and layer.get_name() == layer_name:
+                    layer_obj = layer
+                    break
+                elif hasattr(layer, 'name') and layer.name == layer_name:
+                    layer_obj = layer
+                    break
+        elif isinstance(layers, dict):
+            layer_obj = layers.get(layer_name)
+        
+        if layer_obj is None:
+            continue
+        
+        # Get layer properties
+        if hasattr(layer_obj, 'get_thickness'):
+            thickness = layer_obj.get_thickness()
+        elif hasattr(layer_obj, 'thickness'):
+            thickness = layer_obj.thickness
+        else:
+            thickness = 0.1  # mm, fallback
+        
+        if hasattr(layer_obj, 'get_material'):
+            material = layer_obj.get_material()
+        elif hasattr(layer_obj, 'material'):
+            material = layer_obj.material
+        else:
+            material = layer_name
+        
+        # Get conductivity for this material
+        k = conductivity_values.get(material, 10.0)  # W/(m·K)
+        
+        # Add resistance contribution from this layer
+        # R = thickness / (k * A), but we track per unit area
+        # Total thickness * num_layers
+        layer_total_thickness = thickness * num_layers
+        layer_resistance = layer_total_thickness / k  # relative resistance
+        
+        total_resistance += layer_resistance
+        total_thickness += layer_total_thickness
+    
+    if total_thickness <= 0 or total_resistance <= 0:
+        return 10.0
+    
+    # Effective k = total_thickness / total_resistance
+    k_eff = total_thickness / total_resistance
+    
+    return k_eff
 
 
 def assign_power_to_grid(all_boxes, owner_grid, p_grid):
@@ -261,7 +363,10 @@ def assign_power_to_grid(all_boxes, owner_grid, p_grid):
             continue
 
         box = all_boxes[box_idx]
-        power = getattr(box, "power", 0.0) or 0.0
+        power = getattr(box, "power", 0.0)
+        if power is None:
+            power = 0.0
+        power = float(power)  # Ensure it's a number
         if power == 0.0:
             continue
 
