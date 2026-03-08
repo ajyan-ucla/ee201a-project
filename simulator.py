@@ -2,6 +2,8 @@ import math
 import numpy as np
 from therm import conductivity_values
 
+
+
 def simulator_simulate(
     boxes,
     bonding_box_list,
@@ -28,16 +30,18 @@ def simulator_simulate(
     - Keep units consistent. The repo appears to use mm for geometry.
     """
 
-    # Input validation
+    # Input validation - Check if we have any boxes to simulate
     if not boxes or len(boxes) == 0:
         print("Warning: No boxes provided to simulator")
         return {}
-    
+
+    # Initialize empty lists if not provided
     if not bonding_box_list:
         bonding_box_list = []
     if not TIM_boxes:
         TIM_boxes = []
-    
+        
+    # Combine all thermal solids into one list for processing
     all_boxes = list(boxes) + list(bonding_box_list) + list(TIM_boxes)
     
     if len(all_boxes) == 0:
@@ -56,6 +60,7 @@ def simulator_simulate(
     # ------------------------------------------------------------------
     # 1) Choose grid resolution
     # ------------------------------------------------------------------
+    # Define voxel spacing in each direction
     dx = 0.5  # mm  <-- coarse starting point; refine later
     dy = 0.5  # mm
     dz = 0.1  # mm  <-- often smaller in z is helpful
@@ -63,6 +68,7 @@ def simulator_simulate(
     # ------------------------------------------------------------------
     # 2) Determine global bounding box
     # ------------------------------------------------------------------
+    # Find the min/max coordinates of the entire geometry
     xmin = min(b.start_x for b in all_boxes)
     xmax = max(b.end_x   for b in all_boxes)
     ymin = min(b.start_y for b in all_boxes)
@@ -70,6 +76,7 @@ def simulator_simulate(
     zmin = min(b.start_z for b in all_boxes)
     zmax = max(b.end_z   for b in all_boxes)
 
+    # Calculate number of voxels in each direction
     nx = max(1, int(math.ceil((xmax - xmin) / dx)))
     ny = max(1, int(math.ceil((ymax - ymin) / dy)))
     nz = max(1, int(math.ceil((zmax - zmin) / dz)))
@@ -77,17 +84,35 @@ def simulator_simulate(
     # ------------------------------------------------------------------
     # 3) Allocate grid property arrays
     # ------------------------------------------------------------------
-    # Thermal conductivity per voxel
+    # Create 3D nump arrays to store properties at each voxel
+    
+    # THERMAL CONDUCTIVITY GRID
+    # k_grid[i,j,k] = thermal conductivity of voxel at grid position (i,j,k)
+    # Units: W/(m·K)
+    # Initialized to zero; will be filled based on material at that location
     k_grid = np.zeros((nx, ny, nz), dtype=float)
 
-    # Power injected into each voxel [W]
+    # POWER GRID
+    # p_grid[i,j,k] = power dissipated in voxel (i,j,k)
+    # Units: W (total watts, not watts per volume)
+    # This is the heat source term in the Fourier equation
     p_grid = np.zeros((nx, ny, nz), dtype=float)
 
-    # Box owner index / debugging aid
+    # OWNER GRID (debugging/bookkeeping)
+    # owner_grid[i,j,k] = index of the box that owns/contains this voxel
+    # -1 means voxel is outside all solid objects (filled with air/vacuum)
     owner_grid = np.full((nx, ny, nz), fill_value=-1, dtype=int)
 
-    # Ambient/default values
+    # AMBIENT CONDITIONS
+    # k_air: Thermal conductivity of air/void space
+    #        If a voxel is not inside any solid box, use air conductivity
+    #        (typically you'd set this to 0 if voids are truly empty, but
+    #         leaving as low air value prevents singularities)
     k_air = 0.026  # W/(m*K), if you ever leave empty space in the model
+
+
+    # T_amb: Ambient temperature for boundary conditions
+    #        This is the temperature assumed at cooling surfaces (e.g., heatsink)
     T_amb = 25.0   # degC
 
     # ------------------------------------------------------------------
@@ -95,30 +120,38 @@ def simulator_simulate(
     # ------------------------------------------------------------------
     # Strategy:
     # For each voxel center, figure out which box contains it, then assign k.
-    # Start simple: one effective isotropic k per box.
-    # Later you can improve stackup handling.
+    # PHYSICS: We need to know the thermal conductivity at each point in space
+    # to build the Laplacian operator. Conductivity can vary by material layers.
     # ------------------------------------------------------------------
     for i in range(nx):
         for j in range(ny):
             for k in range(nz):
+                # Find the physical (x,y,z) coordinates of the voxel center
                 x, y, z = voxel_center(i, j, k, xmin, ymin, zmin, dx, dy, dz)
 
+                # Determine which box (if any) contains this voxel center
                 box_idx = find_containing_box_index(all_boxes, x, y, z)
                 if box_idx is None:
                     # Outside all solids
                     k_grid[i, j, k] = k_air
                     continue
 
+                # Mark which box owns this voxel (for later postprocessing)
                 box = all_boxes[box_idx]
                 owner_grid[i, j, k] = box_idx
+
+                # Compute effective conductivity for this box's material/stackup
+                # (handles complex multilayer structures)
                 k_grid[i, j, k] = effective_box_conductivity(box, layers)
 
     # ------------------------------------------------------------------
     # 5) Fill power grid
     # ------------------------------------------------------------------
-    # Distribute each powered box's total power uniformly over its voxels.
-    # PDF says use GPU = 400 W and each HBM = 5 W. therm.py may already
-    # populate box.power, so prefer box.power when available. :contentReference[oaicite:2]{index=2}
+    # Distribute each box's total power uniformly over its voxels
+    # 
+    # PHYSICS: In the heat equation, P is a source term that adds energy.
+    # A box with 400W total dissipation gets that 400W spread uniformly
+    # across all voxels inside the box.
     # ------------------------------------------------------------------
     assign_power_to_grid(all_boxes, owner_grid, p_grid)
 
@@ -162,9 +195,17 @@ def simulator_simulate(
     # ------------------------------------------------------------------
     # 7) Apply top-surface cooling boundary
     # ------------------------------------------------------------------
-    # Simplest physically reasonable version:
-    # connect top voxels to ambient through convection.
-    # g_conv = h * A
+    # Model convective heat transfer from the top surface to the ambient.
+    # PHYSICS: Convection is modeled as:
+    #          Q = h * A * (T_surface - T_ambient)
+    #   where h is the heat transfer coefficient (W/m²·K)
+    #         A is the surface area (m²)
+    # 
+    # In thermal network form: G_conv = h * A
+    # This is stamped into the diagonal as:
+    #          G[u,u] += G_conv
+    #          b[u] += G_conv * T_amb
+    # which enforces: G_conv*(T_u - T_amb) term in the balance.
     # Need unit consistency if h comes in W/(m^2*K) while dx,dy are in mm.
     # ------------------------------------------------------------------
     h = extract_htc_from_heatsink(heatsink_obj, default_h=5000.0)
@@ -183,9 +224,13 @@ def simulator_simulate(
     # ------------------------------------------------------------------
     # 8) Solve system
     # ------------------------------------------------------------------
-    # T is temperature rise or absolute temperature depending on your setup.
-    # Here, because ambient is stamped directly into b, T solves to absolute degC.
+    # G is an (n_nodes × n_nodes) conductance matrix
+    # T is the unknown temperature vector (n_nodes × 1)
+    # b is the RHS vector (n_nodes × 1) containing power sources
+    # 
+    # Solution method: Direct linear solve (np.linalg.solve)
     # ------------------------------------------------------------------
+    # Check condition number of matrix
     try:
         cond_number = np.linalg.cond(G)
         if cond_number > 1e15:
