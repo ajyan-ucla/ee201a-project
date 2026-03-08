@@ -1,6 +1,6 @@
 import math
 import numpy as np
-
+from therm import conductivity_values
 
 def simulator_simulate(
     boxes,
@@ -187,9 +187,9 @@ def simulator_simulate(
     # Here, because ambient is stamped directly into b, T solves to absolute degC.
     # ------------------------------------------------------------------
     try:
-    cond_number = np.linalg.cond(G)
-    if cond_number > 1e15:
-        print(f"Warning: Matrix condition number is high ({cond_number:.2e}), results may be inaccurate")
+        cond_number = np.linalg.cond(G)
+        if cond_number > 1e15:
+            print(f"Warning: Matrix condition number is high ({cond_number:.2e}), results may be inaccurate")
     except:
         pass
     
@@ -274,10 +274,7 @@ def effective_box_conductivity(box, layers):
             return 36.0   # SnPb solder
         else:
             return 10.0   # generic
-    
-    # Import conductivity dictionary
-    from therm import conductivity_values
-    
+       
     # Parse stackup string: split by comma
     try:
         stackup_specs = str(box.stackup).split(",")
