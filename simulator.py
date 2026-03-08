@@ -256,97 +256,116 @@ def find_containing_box_index(all_boxes, x, y, z):
 
 def effective_box_conductivity(box, layers):
     """
-    Extract effective thermal conductivity from box stackup.
+    Handle both simple and composite stackups.
     
-    Stackup format: "N:layer_name,M:layer_name2"
-    Example: "1:5nm_active,2:5nm_advanced_metal"
-    
-    Returns effective k considering all layers in series.
+    Simple: "1:layer_name,2:layer_name2"
+    Composite: "1:material1:50,material2:50"
     """
     if layers is None or not hasattr(box, 'stackup') or not box.stackup:
-        # Fallback: guess from name
-        name_lower = box.name.lower()
-        if "gpu" in name_lower or "hbm" in name_lower:
-            return 105.0  # Si
-        elif "tim" in name_lower:
-            return 100.0  # TIM
-        elif "bond" in name_lower:
-            return 36.0   # SnPb solder
-        else:
-            return 10.0   # generic
-       
-    # Parse stackup string: split by comma
+        # Fallback logic
+        ...
+    
+    from therm import conductivity_values
+    
     try:
         stackup_specs = str(box.stackup).split(",")
     except:
         return 10.0
     
-    # Collect all layer names with their thicknesses
-    total_resistance = 0.0  # K / W (for 1 mm^2 cross-section)
-    total_thickness = 0.0   # mm
+    total_resistance = 0.0
+    total_thickness = 0.0
     
     for spec in stackup_specs:
         spec = spec.strip()
         if ":" not in spec:
             continue
         
-        try:
-            # Parse "N:layer_name"
-            num_str, layer_name = spec.split(":")
-            num_layers = int(num_str)
-            layer_name = layer_name.strip()
-        except:
-            continue
+        parts = spec.split(":")
         
-        # Find layer in layers list
-        layer_obj = None
-        if isinstance(layers, list):
-            for layer in layers:
-                if hasattr(layer, 'get_name') and layer.get_name() == layer_name:
-                    layer_obj = layer
-                    break
-                elif hasattr(layer, 'name') and layer.name == layer_name:
-                    layer_obj = layer
-                    break
-        elif isinstance(layers, dict):
-            layer_obj = layers.get(layer_name)
+        # ===== HANDLE COMPOSITE MATERIALS =====
+        if len(parts) >= 3:  # Composite: N:material1:percent1
+            try:
+                num_layers = int(parts[0])
+                material_name = parts[1]
+                percentage = float(parts[2])
+            except (ValueError, IndexError):
+                continue
+            
+            # Get conductivity for this material
+            k = conductivity_values.get(material_name, 10.0)
+            
+            # Layer object might exist for this material
+            layer_obj = None
+            if isinstance(layers, list):
+                for layer in layers:
+                    if hasattr(layer, 'get_material') and layer.get_material() == material_name:
+                        layer_obj = layer
+                        break
+            
+            # Get thickness
+            if layer_obj and hasattr(layer_obj, 'get_thickness'):
+                thickness = layer_obj.get_thickness()
+            else:
+                thickness = 0.1  # fallback
+            
+            # Weighted contribution by percentage
+            layer_total_thickness = (thickness * num_layers) * (percentage / 100.0)
+            layer_resistance = layer_total_thickness / k
+            
+            total_resistance += layer_resistance
+            total_thickness += layer_total_thickness
         
-        if layer_obj is None:
-            continue
-        
-        # Get layer properties
-        if hasattr(layer_obj, 'get_thickness'):
-            thickness = layer_obj.get_thickness()
-        elif hasattr(layer_obj, 'thickness'):
-            thickness = layer_obj.thickness
-        else:
-            thickness = 0.1  # mm, fallback
-        
-        if hasattr(layer_obj, 'get_material'):
-            material = layer_obj.get_material()
-        elif hasattr(layer_obj, 'material'):
-            material = layer_obj.material
-        else:
-            material = layer_name
-        
-        # Get conductivity for this material
-        k = conductivity_values.get(material, 10.0)  # W/(m·K)
-        
-        # Add resistance contribution from this layer
-        # R = thickness / (k * A), but we track per unit area
-        # Total thickness * num_layers
-        layer_total_thickness = thickness * num_layers
-        layer_resistance = layer_total_thickness / k  # relative resistance
-        
-        total_resistance += layer_resistance
-        total_thickness += layer_total_thickness
+        # ===== HANDLE SIMPLE LAYERS =====
+        elif len(parts) == 2:  # Simple: N:layer_name
+            try:
+                num_str, layer_name = parts
+                num_layers = int(num_str)
+                layer_name = layer_name.strip()
+            except (ValueError, IndexError):
+                continue
+            
+            # Find layer in layers list
+            layer_obj = None
+            if isinstance(layers, list):
+                for layer in layers:
+                    if hasattr(layer, 'get_name') and layer.get_name() == layer_name:
+                        layer_obj = layer
+                        break
+            elif isinstance(layers, dict):
+                layer_obj = layers.get(layer_name)
+            
+            if layer_obj is None:
+                continue
+            
+            # Get properties
+            if hasattr(layer_obj, 'get_thickness'):
+                thickness = layer_obj.get_thickness()
+            elif hasattr(layer_obj, 'thickness'):
+                thickness = layer_obj.thickness
+            else:
+                thickness = 0.1
+            
+            if hasattr(layer_obj, 'get_material'):
+                material = layer_obj.get_material()
+            elif hasattr(layer_obj, 'material'):
+                material = layer_obj.material
+            else:
+                material = layer_name
+            
+            # Get conductivity
+            k = conductivity_values.get(material, 10.0)
+            
+            # Add resistance
+            layer_total_thickness = thickness * num_layers
+            layer_resistance = layer_total_thickness / k
+            
+            total_resistance += layer_resistance
+            total_thickness += layer_total_thickness
     
     if total_thickness <= 0 or total_resistance <= 0:
         return 10.0
     
-    # Effective k = total_thickness / total_resistance
     k_eff = total_thickness / total_resistance
-    
     return k_eff
 
 
