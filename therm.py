@@ -1657,7 +1657,27 @@ def therm(therm_conf, heatsink_conf, bonding_conf, heatsink, out_dir, project_na
         simulation_end_time = time.time()
         print("Simulation finished at ", simulation_end_time)
         print("Time taken for simulation: ", simulation_end_time - simulation_start_time)
-        return #TODO: Comment out later
+        # return #TODO: Comment out later
+        
+        # Process and display results
+        if results:
+            print("\n=== Thermal Simulation Results ===")
+            gpu_temps = []
+            hbm_temps = []
+            
+            for box_name, (peak_temp, avg_temp, Rx, Ry, Rz) in results.items():
+                print(f"{box_name}: Peak={peak_temp:.2f}°C, Avg={avg_temp:.2f}°C")
+                if "GPU" in box_name:
+                    gpu_temps.append(peak_temp)
+                elif "HBM" in box_name:
+                    hbm_temps.append(peak_temp)
+            
+            if gpu_temps:
+                print(f"\nGPU Max Peak Temperature: {max(gpu_temps):.2f}°C")
+            if hbm_temps:
+                print(f"HBM Max Peak Temperature: {max(hbm_temps):.2f}°C")
+        else:
+            print("Warning: No results returned from simulator")
 
     # dedeepyo : 4-Jun-25
 
