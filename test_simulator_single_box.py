@@ -1,4 +1,3 @@
-```python
 #!/usr/bin/env python3
 """
 Integration test: Single box thermal simulation
