@@ -67,23 +67,23 @@ def test_single_box_gpu():
     if results:
         for name, (peak, avg, Rx, Ry, Rz) in results.items():
             print(f"  {name}:")
-            print(f"    Peak Temp: {peak:.2f}°C")
-            print(f"    Avg Temp:  {avg:.2f}°C")
+            print(f"    Peak Temp: {peak:.2f}C")
+            print(f"    Avg Temp:  {avg:.2f}C")
             print(f"    Rx:        {Rx:.6f} K/W")
             print(f"    Ry:        {Ry:.6f} K/W")
             print(f"    Rz:        {Rz:.6f} K/W")
             
             # Sanity checks
-            assert peak > 25, f"Peak temp should be > 25°C (ambient), got {peak}"
-            assert peak < 200, f"Peak temp should be < 200°C (unrealistic), got {peak}"
+            assert peak > 25, f"Peak temp should be > 25C (ambient), got {peak}"
+            assert peak < 200, f"Peak temp should be < 200C (unrealistic), got {peak}"
             assert avg <= peak, f"Average should be <= peak, got avg={avg}, peak={peak}"
             
-            print(f"  ✓ Results are physically reasonable")
+            print(f"   Results are physically reasonable")
     else:
-        print("  ✗ No results returned!")
+        print("   No results returned!")
         return False
     
-    print("\n✓ TEST PASSED")
+    print("\n TEST PASSED")
     return True
 
 def test_single_box_hbm():
@@ -138,19 +138,19 @@ def test_single_box_hbm():
     if results:
         for name, (peak, avg, Rx, Ry, Rz) in results.items():
             print(f"  {name}:")
-            print(f"    Peak Temp: {peak:.2f}°C")
-            print(f"    Avg Temp:  {avg:.2f}°C")
+            print(f"    Peak Temp: {peak:.2f}C")
+            print(f"    Avg Temp:  {avg:.2f}C")
             
             # With 5W, should be much closer to ambient
-            assert peak < 100, f"HBM with 5W should be < 100°C, got {peak}"
+            assert peak < 100, f"HBM with 5W should be < 100C, got {peak}"
             assert peak > 25, f"Should still be above ambient"
             
-            print(f"  ✓ Results are reasonable for low-power HBM")
+            print(f"   Results are reasonable for low-power HBM")
     else:
-        print("  ✗ No results!")
+        print("   No results!")
         return False
     
-    print("\n✓ TEST PASSED")
+    print("\n TEST PASSED")
     return True
 
 if __name__ == "__main__":
@@ -160,12 +160,12 @@ if __name__ == "__main__":
         
         if test1 and test2:
             print("\n" + "=" * 50)
-            print("✓ ALL INTEGRATION TESTS PASSED")
+            print(" ALL INTEGRATION TESTS PASSED")
             print("=" * 50)
         else:
             sys.exit(1)
     except Exception as e:
-        print(f"\n✗ ERROR: {e}")
+        print(f"\n ERROR: {e}")
         import traceback
         traceback.print_exc()
         sys.exit(1)
