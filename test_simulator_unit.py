@@ -35,7 +35,7 @@ def test_voxel_center():
     print("Testing voxel_center...")
     x, y, z = voxel_center(0, 0, 0, 0, 0, 0, 1.0, 1.0, 1.0)
     assert x == 0.5 and y == 0.5 and z == 0.5, f"Expected (0.5, 0.5, 0.5), got ({x}, {y}, {z})"
-    print("  ✓ voxel_center passed")
+    print("  PASS voxel_center passed")
 
 def test_node_id():
     """Test node ID calculation"""
@@ -53,7 +53,7 @@ def test_node_id():
     idx = node_id(0, 1, 0, 10, 10, 10)
     assert idx == 10, f"Expected 10, got {idx}"
     
-    print("  ✓ node_id passed")
+    print("  PASS node_id passed")
 
 def test_point_in_box():
     """Test point containment"""
@@ -64,51 +64,58 @@ def test_point_in_box():
     assert point_in_box(box, -1, 5, 5) == False, "Point outside should return False"
     assert point_in_box(box, 10, 5, 5) == False, "Point on boundary should return False"
     
-    print("  ✓ point_in_box passed")
+    print("  PASS point_in_box passed")
 
 def test_effective_box_conductivity():
     """Test conductivity lookup"""
     print("Testing effective_box_conductivity...")
+    
+    si_layer = Layer(
+        name="Si",
+        active=True,
+        cost_per_mm2=0.1,
+        defect_density=0.01,
+        critical_area_ratio=0.5,
+        clustering_factor=1.0,
+        litho_percent=0.0,
+        mask_cost=0.0,
+        stitching_yield=1.0,
+        static=True,
+        thickness=1.0,
+        material="Si"
+    )
+    layers = [si_layer]
+    
     box = MockBox("gpu", 0, 0, 0, 10, 10, 10, stackup="1:Si")
+    k = effective_box_conductivity(box, layers)
+    assert k > 100, f"Si conductivity should be high (~105), got {k}"
     
-    # Test with no layers (should use fallback)
-    k = effective_box_conductivity(box, None)
-    assert k > 0, f"Conductivity should be positive, got {k}"
-    
-    # Test with GPU in name
-    box_gpu = MockBox("GPU", 0, 0, 0, 10, 10, 10)
-    k_gpu = effective_box_conductivity(box_gpu, None)
-    assert k_gpu > 100, f"GPU k should be high (~105), got {k_gpu}"
-    
-    print("  ✓ effective_box_conductivity passed")
+    print("  PASS effective_box_conductivity passed")
 
 def test_assign_power_to_grid():
     """Test power distribution"""
     print("Testing assign_power_to_grid...")
     
-    # Create simple boxes
     boxes = [
         MockBox("box1", 0, 0, 0, 2, 2, 2, power=100.0),
         MockBox("box2", 2, 0, 0, 2, 2, 2, power=200.0),
     ]
     
-    # Create owner grid (2x2x2 each)
-    owner_grid = np.array([
-        [[0, 0], [0, 0]],
-        [[1, 1], [1, 1]],
-    ])
-    owner_grid = owner_grid.reshape(2, 2, 2)
+    # Create owner grid explicitly - 4 voxels for box1, 4 voxels for box2
+    owner_grid = np.zeros((2, 2, 2), dtype=int)
+    owner_grid[0, :, :] = 0  # First half is box1
+    owner_grid[1, :, :] = 1  # Second half is box2
     
     p_grid = np.zeros((2, 2, 2))
     
-    # Assign power
     assign_power_to_grid(boxes, owner_grid, p_grid)
     
-    # Check that box1 got 100W distributed over 8 voxels = 12.5W each
-    assert p_grid[0, 0, 0] == 100.0 / 8, f"Box1 power distribution wrong"
-    assert p_grid[1, 0, 0] == 200.0 / 8, f"Box2 power distribution wrong"
+    # Box1: 100W / 4 voxels = 25W per voxel
+    # Box2: 200W / 4 voxels = 50W per voxel
+    assert np.allclose(p_grid[0, 0, 0], 100.0 / 4), f"Box1 power distribution wrong"
+    assert np.allclose(p_grid[1, 0, 0], 200.0 / 4), f"Box2 power distribution wrong"
     
-    print("  ✓ assign_power_to_grid passed")
+    print("  PASS assign_power_to_grid passed")
 
 if __name__ == "__main__":
     print("=" * 50)
@@ -123,13 +130,13 @@ if __name__ == "__main__":
         test_assign_power_to_grid()
         
         print("\n" + "=" * 50)
-        print("✓ ALL UNIT TESTS PASSED")
+        print("ALL UNIT TESTS PASSED")
         print("=" * 50)
     except AssertionError as e:
-        print(f"\n✗ TEST FAILED: {e}")
+        print(f"\nTEST FAILED: {e}")
         sys.exit(1)
     except Exception as e:
-        print(f"\n✗ UNEXPECTED ERROR: {e}")
+        print(f"\nUNEXPECTED ERROR: {e}")
         import traceback
         traceback.print_exc()
         sys.exit(1)
