@@ -1,6 +1,6 @@
 import math
 import numpy as np
-from therm import conductivity_values
+from conductivity import conductivity_values
 
 
 
@@ -309,8 +309,6 @@ def effective_box_conductivity(box, layers):
     if layers is None or not hasattr(box, 'stackup') or not box.stackup:
         # Fallback logic
         ...
-    
-    from therm import conductivity_values
     
     try:
         stackup_specs = str(box.stackup).split(",")
