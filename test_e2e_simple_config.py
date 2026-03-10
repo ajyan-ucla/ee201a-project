@@ -1,4 +1,3 @@
-```python
 #!/usr/bin/env python3
 """
 End-to-end test: Run therm.py with minimal configuration
