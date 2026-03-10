@@ -1,4 +1,3 @@
-```python
 #!/usr/bin/env python3
 """
 Unit tests for simulator.py functions
