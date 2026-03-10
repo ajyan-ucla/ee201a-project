@@ -10,7 +10,7 @@ import math
 import matplotlib.pyplot as plt
 import seaborn as sns
 import xml.etree.ElementTree as ET
-from thermal_simulators.factory import SimulatorFactory
+# from thermal_simulators.factory import SimulatorFactory
 from mpl_toolkits.mplot3d import Axes3D
 import numpy as np
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
