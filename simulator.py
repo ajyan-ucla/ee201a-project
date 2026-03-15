@@ -36,9 +36,10 @@ def simulator_simulate(
     if len(all_boxes) == 0:
         return {}
 
-    dx = 0.5
-    dy = 0.5
-    dz = 0.1
+    # Grid parameters
+    dx = 0.5  # mm
+    dy = 0.5  # mm
+    dz = 0.1  # mm
 
     # Compute bounding box
     xmin = min(b.start_x for b in all_boxes)
@@ -48,14 +49,14 @@ def simulator_simulate(
     zmin = min(b.start_z for b in all_boxes)
     zmax = max(b.end_z for b in all_boxes)
 
-    # Compute the number of voxels that fit in each of the bounding box dimensions
+    # Computer the number of voxels that fit in each of the bounding box dimensions
     nx = max(1, int(math.ceil((xmax - xmin) / dx)))
     ny = max(1, int(math.ceil((ymax - ymin) / dy)))
     nz = max(1, int(math.ceil((zmax - zmin) / dz)))
 
     # Initialize conductivity, power dissipation, and owner grids
     k_grid = np.zeros((nx, ny, nz), dtype=float)                    # Stores thermal conductivity at each voxel
-    power_grid = np.zeros((nx, ny, nz), dtype=float)                # Stores heat generation at each voxel
+    power_grid = np.zeros((nx, ny, nz), dtype=float)                # Stores heat generation at each voxel                              
     owner_grid = np.full((nx, ny, nz), fill_value=-1, dtype=int)    # Maps which box each voxel belongs to
 
     # Create coordinate grids
@@ -68,20 +69,20 @@ def simulator_simulate(
     x_grid = xmin + (i_grid + 0.5) * dx
     y_grid = ymin + (j_grid + 0.5) * dy
     z_grid = zmin + (k_grid_idx + 0.5) * dz
-
+    
     # Build owner grid
     for box_idx, box in enumerate(all_boxes):
         mask = ((box.start_x <= x_grid) & (x_grid < box.end_x) &
                 (box.start_y <= y_grid) & (y_grid < box.end_y) &
                 (box.start_z <= z_grid) & (z_grid < box.end_z))
         owner_grid[mask] = box_idx
-
+    
     # Fill k_grid
-    k_grid[:, :, :] = 0.026
+    k_grid[:, :, :] = 0.026 # Initialize to air
     for box_idx, box in enumerate(all_boxes):
         mask = owner_grid == box_idx
         k_grid[mask] = conductivity_values.get(box.material, 100)
-
+    
     # Fill power_grid
     if power_dict:
         voxel_counts = np.zeros(len(all_boxes), dtype=int)
@@ -94,10 +95,6 @@ def simulator_simulate(
                 power_grid[mask] = power_dict[box.name] / voxel_counts[box_idx]
 
     circuit = Circuit('Thermal Network')
-    
-    ambient_node = circuit.gnd
-    ambient_temp = 25
-    heatsink_resistance = 0.1
     
     node_id = {}
     node_counter = 1
@@ -112,6 +109,9 @@ def simulator_simulate(
     dx_m = dx * 1e-3
     dy_m = dy * 1e-3
     dz_m = dz * 1e-3
+    
+    heatsink_r = 0.01
+    ambient_temp = 25
     
     for i in range(nx):
         for j in range(ny):
@@ -139,13 +139,14 @@ def simulator_simulate(
                     k_avg = (k_curr + k_next) / 2
                     R_z = dz_m / (k_avg * dx_m * dy_m)
                     circuit.R(f'rz_{i}_{j}_{k}', curr_node, node_id[(i, j, k + 1)], f'{R_z}@u_Ohm')
-                
-                if k == nz - 1 and power_grid[i, j, k] == 0:
-                    circuit.R(f'rh_{i}_{j}_{k}', curr_node, ambient_node, f'{heatsink_resistance}@u_Ohm')
+                else:
+                    if k == nz - 1:
+                        circuit.R(f'rh_{i}_{j}_{k}', curr_node, circuit.gnd, f'{heatsink_r}@u_Ohm')
                 
                 if power_grid[i, j, k] > 0:
-                    circuit.I(f'heat_{i}_{j}_{k}', curr_node, ambient_node, f'{power_grid[i, j, k]}@u_A')
+                    circuit.I(f'heat_{i}_{j}_{k}', curr_node, circuit.gnd, f'{power_grid[i, j, k]}@u_A')   
 
+    # Run PySpice simulation (DC operating point for steady-state)
     try:
         simulator = circuit.simulator(temperature=ambient_temp, nominal_temperature=ambient_temp)
         analysis = simulator.operating_point()
@@ -154,7 +155,7 @@ def simulator_simulate(
         for (i, j, k), node in node_id.items():
             temps[(i, j, k)] = float(analysis[node])
         
-        box_resistance = {}
+        results = {}
         for box_idx, box in enumerate(all_boxes):
             box_temps = []
             for i in range(nx):
@@ -168,17 +169,18 @@ def simulator_simulate(
                 avg_temp = np.mean(box_temps)
                 
                 if box.name in power_dict and power_dict[box.name] > 0:
-                    Rx = (peak_temp - ambient_temp) / power_dict[box.name]
-                    Ry = (peak_temp - ambient_temp) / power_dict[box.name]
-                    Rz = (peak_temp - ambient_temp) / power_dict[box.name]
+                    power = power_dict[box.name]
+                    Rx = (peak_temp - ambient_temp) / power
+                    Ry = (peak_temp - ambient_temp) / power
+                    Rz = (peak_temp - ambient_temp) / power
                 else:
                     Rx = 0
                     Ry = 0
                     Rz = 0
                 
-                box_resistance[box.name] = (peak_temp, avg_temp, Rx, Ry, Rz)
+                results[box.name] = (peak_temp, avg_temp, Rx, Ry, Rz)
         
-        return box_resistance
+        return results
     
     except Exception as e:
         print(f"PySpice simulation error: {e}")
