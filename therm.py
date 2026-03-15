@@ -1597,7 +1597,7 @@ def therm(therm_conf, heatsink_conf, bonding_conf, heatsink, out_dir, project_na
     heatsink_obj = create_heat_sink(box_list = boxes, heatsink_list = heatsink_list, heatsink_name = heatsink_name, min_TIM_height = min_TIM_height, scale_factor_x = 0, scale_factor_y = 0, area_scale_factor = 1)
     create_power_source_backside(boxes) #
     power_dict = initialize_power_dict_values(boxes)
-
+    print("Power dict:", {k: v for k, v in power_dict.items() if k in ['GPU', 'HBM', 'HBM_l', 'Power_Source']}) # ADDED FOR DEBUG PURPOSES ONLY
     # print("After creating bonding, TIM and heatsink:")
     # for box in boxes:
     #     print(box.name + " " + str(box.start_z) + " " + str(box.end_z) + " " + str(box.height) + " " + str(box.width) + " " + str(box.length) + " " + str(box.start_x) + " " + str(box.start_y) + " " + str(box.end_x) + " " + str(box.end_y))
