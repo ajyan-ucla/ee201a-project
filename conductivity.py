@@ -1,4 +1,5 @@
 """
+Isolated conductivity file for easier unit testing
 Thermal conductivity values for common materials
 Units: W/(m*K)
 """
@@ -19,5 +20,5 @@ conductivity_values = {
     "EpAg": 1.6,
     "Infill_material": 19,
     "Polymer1": 675,
-    "TIM0p5": 1.0,
+    "TIM0p5": 5.0,
 }
