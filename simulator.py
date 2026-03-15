@@ -1,7 +1,8 @@
 import math
 import numpy as np
 from conductivity import conductivity_values
-
+from PySpice.Spice.Netlist import Circuit
+from PySpice.Unit import *
 
 
 def simulator_simulate(
