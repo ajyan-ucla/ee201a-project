@@ -36,11 +36,12 @@ def simulator_simulate(
     if len(all_boxes) == 0:
         return {}
 
-    # Grid parameters (same as before)
+    # Grid parameters
     dx = 0.5  # mm
     dy = 0.5  # mm
     dz = 0.1  # mm
 
+    # Compute bounding box
     xmin = min(b.start_x for b in all_boxes)
     xmax = max(b.end_x for b in all_boxes)
     ymin = min(b.start_y for b in all_boxes)
@@ -48,58 +49,67 @@ def simulator_simulate(
     zmin = min(b.start_z for b in all_boxes)
     zmax = max(b.end_z for b in all_boxes)
 
+    # Computer the number of voxels that fit in each of the bounding box dimensions
     nx = max(1, int(math.ceil((xmax - xmin) / dx)))
     ny = max(1, int(math.ceil((ymax - ymin) / dy)))
     nz = max(1, int(math.ceil((zmax - zmin) / dz)))
 
-    # Build 3D conductivity grid (same as before)
-    k_grid = np.zeros((nx, ny, nz), dtype=float)
-    power_grid = np.zeros((nx, ny, nz), dtype=float)
+    # Initialize conductivity, power dissipation, and owner grids
+    k_grid = np.zeros((nx, ny, nz), dtype=float)                    # Stores thermal conductivity at each voxel
+    power_grid = np.zeros((nx, ny, nz), dtype=float)                # Stores heat generation at each voxel                              
+    owner_grid = np.full((nx, ny, nz), fill_value=-1, dtype=int)    # Maps which box each voxel belongs to
 
-    # Populate grids from boxes (your existing logic)
-    for box in all_boxes:
-        for i in range(nx):
-            for j in range(ny):
-                for k in range(nz):
-                    x = xmin + i * dx
-                    y = ymin + j * dy
-                    z = zmin + k * dz
-                    
-                    if (box.start_x <= x < box.end_x and
-                        box.start_y <= y < box.end_y and
-                        box.start_z <= z < box.end_z):
-                        k_grid[i, j, k] = conductivity_values.get(box.material, 100)
+    # Create coordinate grids
+    i_indices = np.arange(nx)
+    j_indices = np.arange(ny)
+    k_indices = np.arange(nz)
 
+    i_grid, j_grid, k_grid_idx = np.meshgrid(i_indices, j_indices, k_indices, indexing='ij')
+    
+    x_grid = xmin + (i_grid + 0.5) * dx
+    y_grid = ymin + (j_grid + 0.5) * dy
+    z_grid = zmin + (k_grid_idx + 0.5) * dz
+    
+    # Build owner grid
+    for box_idx, box in enumerate(all_boxes):
+        mask = ((box.start_x <= x_grid) & (x_grid < box.end_x) &
+                (box.start_y <= y_grid) & (y_grid < box.end_y) &
+                (box.start_z <= z_grid) & (z_grid < box.end_z))
+        owner_grid[mask] = box_idx
+    
+    # Fill k_grid
+    k_grid[:, :, :] = 0.026 # Initialize to air
+    for box_idx, box in enumerate(all_boxes):
+        mask = owner_grid == box_idx
+        k_grid[mask] = conductivity_values.get(box.material, 100)
+    
+    # Fill power_grid
     if power_dict:
-        for box_name, power in power_dict.items():
-            for box in all_boxes:
-                if box.name == box_name:
-                    for i in range(nx):
-                        for j in range(ny):
-                            for k in range(nz):
-                                x = xmin + i * dx
-                                y = ymin + j * dy
-                                z = zmin + k * dz
-                                if (box.start_x <= x < box.end_x and
-                                    box.start_y <= y < box.end_y and
-                                    box.start_z <= z < box.end_z):
-                                    power_grid[i, j, k] = power / (np.sum(power_grid > 0) if np.sum(power_grid > 0) else 1)
+        voxel_counts = np.zeros(len(all_boxes), dtype=int)
+        for box_idx in range(len(all_boxes)):
+            voxel_counts[box_idx] = np.sum(owner_grid == box_idx)
+        
+        for box_idx, box in enumerate(all_boxes):
+            if box.name in power_dict and voxel_counts[box_idx] > 0:
+                mask = owner_grid == box_idx
+                power_grid[mask] = power_dict[box.name] / voxel_counts[box_idx]
 
-    # Convert grid to PySpice netlist
     circuit = Circuit('Thermal Network')
     
-    # Create SPICE netlist from RC grid
     node_id = {}
     node_counter = 1
-    
+
     for i in range(nx):
         for j in range(ny):
             for k in range(nz):
                 if k_grid[i, j, k] > 0:
                     node_id[(i, j, k)] = node_counter
                     node_counter += 1
-
-    # Add resistances between adjacent voxels
+    
+    dx_m = dx * 1e-3
+    dy_m = dy * 1e-3
+    dz_m = dz * 1e-3
+    
     for i in range(nx):
         for j in range(ny):
             for k in range(nz):
@@ -109,57 +119,43 @@ def simulator_simulate(
                 curr_node = node_id[(i, j, k)]
                 k_curr = k_grid[i, j, k]
                 
-                # Resistance in +X direction
                 if i + 1 < nx and (i + 1, j, k) in node_id:
                     k_next = k_grid[i + 1, j, k]
-                    # R = distance / (k * area)
-                    R_x = dx / (k_curr * dy * dz) if k_curr > 0 else 1e6
-                    circuit.R(f'rx_{i}_{j}_{k}', curr_node, node_id[(i + 1, j, k)], f'{R_x}@u_kΩ')
+                    k_avg = (k_curr + k_next) / 2
+                    R_x = dx_m / (k_avg * dy_m * dz_m)
+                    circuit.R(f'rx_{i}_{j}_{k}', curr_node, node_id[(i + 1, j, k)], f'{R_x}@u_Ohm')
                 
-                # Resistance in +Y direction
                 if j + 1 < ny and (i, j + 1, k) in node_id:
                     k_next = k_grid[i, j + 1, k]
-                    R_y = dy / (k_curr * dx * dz) if k_curr > 0 else 1e6
-                    circuit.R(f'ry_{i}_{j}_{k}', curr_node, node_id[(i, j + 1, k)], f'{R_y}@u_kΩ')
+                    k_avg = (k_curr + k_next) / 2
+                    R_y = dy_m / (k_avg * dx_m * dz_m)
+                    circuit.R(f'ry_{i}_{j}_{k}', curr_node, node_id[(i, j + 1, k)], f'{R_y}@u_Ohm')
                 
-                # Resistance in +Z direction
                 if k + 1 < nz and (i, j, k + 1) in node_id:
                     k_next = k_grid[i, j, k + 1]
-                    R_z = dz / (k_curr * dx * dy) if k_curr > 0 else 1e6
-                    circuit.R(f'rz_{i}_{j}_{k}', curr_node, node_id[(i, j, k + 1)], f'{R_z}@u_kΩ')
-
-    # Add power sources
-    for i in range(nx):
-        for j in range(ny):
-            for k in range(nz):
-                if power_grid[i, j, k] > 0 and (i, j, k) in node_id:
-                    # Current source (heat) to ground
-                    circuit.I(f'heat_{i}_{j}_{k}', node_id[(i, j, k)], circuit.gnd, f'{power_grid[i, j, k]}@u_A')
+                    k_avg = (k_curr + k_next) / 2
+                    R_z = dz_m / (k_avg * dx_m * dy_m)
+                    circuit.R(f'rz_{i}_{j}_{k}', curr_node, node_id[(i, j, k + 1)], f'{R_z}@u_Ohm')
+                
+                if power_grid[i, j, k] > 0:
+                    circuit.I(f'heat_{i}_{j}_{k}', curr_node, circuit.gnd, f'{power_grid[i, j, k]}@u_A')   
 
     # Run PySpice simulation (DC operating point for steady-state)
     try:
         simulator = circuit.simulator(temperature=25, nominal_temperature=25)
         analysis = simulator.operating_point()
         
-        # Extract temperatures from nodes
         temps = {}
         for (i, j, k), node in node_id.items():
             temps[(i, j, k)] = float(analysis[node])
         
-        # Map temperatures back to boxes
         results = {}
-        for box in boxes:
+        for box_idx, box in enumerate(all_boxes):
             box_temps = []
             for i in range(nx):
                 for j in range(ny):
                     for k in range(nz):
-                        x = xmin + i * dx
-                        y = ymin + j * dy
-                        z = zmin + k * dz
-                        if (box.start_x <= x < box.end_x and
-                            box.start_y <= y < box.end_y and
-                            box.start_z <= z < box.end_z and
-                            (i, j, k) in temps):
+                        if owner_grid[i, j, k] == box_idx and (i, j, k) in temps:
                             box_temps.append(temps[(i, j, k)])
             
             if box_temps:
