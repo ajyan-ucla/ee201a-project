@@ -168,15 +168,12 @@ def simulator_simulate(
                 peak_temp = max(box_temps)
                 avg_temp = np.mean(box_temps)
                 
-                if box.name in power_dict and power_dict[box.name] > 0:
-                    power = power_dict[box.name]
-                    Rx = (peak_temp - ambient_temp) / power
-                    Ry = (peak_temp - ambient_temp) / power
-                    Rz = (peak_temp - ambient_temp) / power
-                else:
-                    Rx = 0
-                    Ry = 0
-                    Rz = 0
+                k_box = conductivity_values.get(box.material, 100)
+
+                # Thermal resistance calculation based on geometry and material conductivity
+                Rx = (box.width * 1e-3) / (k_box * box.length * 1e-3 * box.height * 1e-3)
+                Ry = (box.length * 1e-3) / (k_box * box.width * 1e-3 * box.height * 1e-3)
+                Rz = (box.height * 1e-3) / (k_box * box.width * 1e-3 * box.length * 1e-3)
                 
                 results[box.name] = (peak_temp, avg_temp, Rx, Ry, Rz)
         
