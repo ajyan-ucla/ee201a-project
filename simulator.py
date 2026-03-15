@@ -111,7 +111,7 @@ def simulator_simulate(
     dz_m = dz * 1e-3
     
     heatsink_r = 0.01
-    ambient_temp = 25
+    ambient_temp = 45
     
     for i in range(nx):
         for j in range(ny):
