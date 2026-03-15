@@ -59,7 +59,7 @@ conductivity_values = {
     "EpAg": 1.6,
     "Infill_material": 19,
     "Polymer1": 675,
-    "TIM0p5": 1.0 # 0.5 # 100.0 # 
+    "TIM0p5": 5.0 #1.0 # 0.5 # 100.0 # 
 }
 # EpAg is Epoxy, Silver filled used in layer_definitions.xml for bonding layers 5nm_HBM2HBM_metal.
 
