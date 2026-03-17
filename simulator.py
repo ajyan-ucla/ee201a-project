@@ -4,6 +4,118 @@ from conductivity import conductivity_values
 from PySpice.Spice.Netlist import Circuit
 from PySpice.Unit import *
 
+def effective_box_conductivity(box, layers):
+    """
+    Handle both simple and composite stackups.
+    
+    Simple: "1:layer_name,2:layer_name2"
+    Composite: "1:material1:50,material2:50"
+    """
+    if layers is None or not hasattr(box, 'stackup') or not box.stackup:
+        # Fallback logic
+        ...
+    
+    try:
+        stackup_specs = str(box.stackup).split(",")
+    except:
+        return 10.0
+    
+    total_resistance = 0.0
+    total_thickness = 0.0
+    
+    for spec in stackup_specs:
+        spec = spec.strip()
+        if ":" not in spec:
+            continue
+        
+        parts = spec.split(":")
+        
+        # ===== HANDLE COMPOSITE MATERIALS =====
+        if len(parts) >= 3:  # Composite: N:material1:percent1
+            try:
+                num_layers = int(parts[0])
+                material_name = parts[1]
+                percentage = float(parts[2])
+            except (ValueError, IndexError):
+                continue
+            
+            # Get conductivity for this material
+            k = conductivity_values.get(material_name, 10.0)
+            
+            # Layer object might exist for this material
+            layer_obj = None
+            if isinstance(layers, list):
+                for layer in layers:
+                    if hasattr(layer, 'get_material') and layer.get_material() == material_name:
+                        layer_obj = layer
+                        break
+            
+            # Get thickness
+            if layer_obj and hasattr(layer_obj, 'get_thickness'):
+                thickness = layer_obj.get_thickness()
+            else:
+                thickness = 0.1  # fallback
+            
+            # Weighted contribution by percentage
+            layer_total_thickness = (thickness * num_layers) * (percentage / 100.0)
+            layer_resistance = layer_total_thickness / k
+            
+            total_resistance += layer_resistance
+            total_thickness += layer_total_thickness
+        
+        # ===== HANDLE SIMPLE LAYERS =====
+        elif len(parts) == 2:  # Simple: N:layer_name
+            try:
+                num_str, layer_name = parts
+                num_layers = int(num_str)
+                layer_name = layer_name.strip()
+            except (ValueError, IndexError):
+                continue
+            
+            # Find layer in layers list
+            layer_obj = None
+            if isinstance(layers, list):
+                for layer in layers:
+                    if hasattr(layer, 'get_name') and layer.get_name() == layer_name:
+                        layer_obj = layer
+                        break
+            elif isinstance(layers, dict):
+                layer_obj = layers.get(layer_name)
+            
+            if layer_obj is None:
+                continue
+            
+            # Get properties
+            if hasattr(layer_obj, 'get_thickness'):
+                thickness = layer_obj.get_thickness()
+            elif hasattr(layer_obj, 'thickness'):
+                thickness = layer_obj.thickness
+            else:
+                thickness = 0.1
+            
+            if hasattr(layer_obj, 'get_material'):
+                material = layer_obj.get_material()
+            elif hasattr(layer_obj, 'material'):
+                material = layer_obj.material
+            else:
+                material = layer_name
+            
+            # Get conductivity
+            k = conductivity_values.get(material, 10.0)
+            
+            # Add resistance
+            layer_total_thickness = thickness * num_layers
+            layer_resistance = layer_total_thickness / k
+            
+            total_resistance += layer_resistance
+            total_thickness += layer_total_thickness
+    
+    if total_thickness <= 0 or total_resistance <= 0:
+        return 10.0
+    
+    k_eff = total_thickness / total_resistance
+    return k_eff
+
 def simulator_simulate(
     boxes,
     bonding_box_list,
