@@ -136,6 +136,8 @@ def simulator_simulate(
     Returns: results[box.name] = (peak_temp, avg_temp, Rx, Ry, Rz)
     """
     
+    print("[SIMULATOR] Starting simulator_simulate with {} boxes".format(len(boxes) if boxes else 0))
+    
     if not boxes or len(boxes) == 0:
         return {}
 
@@ -147,6 +149,8 @@ def simulator_simulate(
     all_boxes = list(boxes) + list(bonding_box_list) + list(TIM_boxes)
     if len(all_boxes) == 0:
         return {}
+
+    print("[SIMULATOR] Total boxes to simulate: {}".format(len(all_boxes)))
 
     # Grid parameters
     dx = 0.5  # mm
@@ -165,6 +169,9 @@ def simulator_simulate(
     nx = max(1, int(math.ceil((xmax - xmin) / dx)))
     ny = max(1, int(math.ceil((ymax - ymin) / dy)))
     nz = max(1, int(math.ceil((zmax - zmin) / dz)))
+
+    print("[SIMULATOR] Grid dimensions: nx={}, ny={}, nz={}".format(nx, ny, nz))
+    print("[SIMULATOR] Total voxels: {}".format(nx * ny * nz))
 
     # Initialize conductivity, power dissipation, and owner grids
     k_grid = np.zeros((nx, ny, nz), dtype=float)                    # Stores thermal conductivity at each voxel
@@ -195,6 +202,8 @@ def simulator_simulate(
         mask = owner_grid == box_idx
         k_grid[mask] = effective_box_conductivity(box, layers)
     
+    print("[SIMULATOR] Filled conductivity grid")
+
     # Fill power_grid
     if power_dict:
         voxel_counts = np.zeros(len(all_boxes), dtype=int)
@@ -206,6 +215,7 @@ def simulator_simulate(
                 mask = owner_grid == box_idx
                 power_grid[mask] = power_dict[box.name] / voxel_counts[box_idx]
 
+    print("[SIMULATOR] Building PySpice circuit...")
     circuit = Circuit('Thermal Network')
     
     node_id = {}
@@ -218,6 +228,8 @@ def simulator_simulate(
                     node_id[(i, j, k)] = node_counter
                     node_counter += 1
     
+    print("[SIMULATOR] Created {} circuit nodes".format(len(node_id)))
+
     dx_m = dx * 1e-3
     dy_m = dy * 1e-3
     dz_m = dz * 1e-3
@@ -259,13 +271,18 @@ def simulator_simulate(
                     circuit.I(f'heat_{i}_{j}_{k}', curr_node, circuit.gnd, f'{power_grid[i, j, k]}@u_A')   
 
     # Run PySpice simulation (DC operating point for steady-state)
+    print("[SIMULATOR] Running PySpice simulation...")
     try:
         simulator = circuit.simulator(temperature=ambient_temp, nominal_temperature=ambient_temp)
         analysis = simulator.operating_point()
         
+        print("[SIMULATOR] PySpice simulation completed successfully")
+        
         temps = {}
         for (i, j, k), node in node_id.items():
             temps[(i, j, k)] = float(analysis[node])
+        
+        print("[SIMULATOR] Extracted {} temperature values".format(len(temps)))
         
         results = {}
         for box_idx, box in enumerate(all_boxes):
@@ -288,9 +305,13 @@ def simulator_simulate(
                 Rz = (box.height * 1e-3) / (k_box * box.width * 1e-3 * box.length * 1e-3)
                 
                 results[box.name] = (peak_temp, avg_temp, Rx, Ry, Rz)
+                print("[SIMULATOR] {}: peak={:.2f}C, avg={:.2f}C, Rx={:.4e}".format(box.name, peak_temp, avg_temp, Rx))
         
+        print("[SIMULATOR] Returning {} results".format(len(results)))
         return results
     
     except Exception as e:
-        print(f"PySpice simulation error: {e}")
+        print("[SIMULATOR] PySpice simulation error: {}".format(e))
+        import traceback
+        traceback.print_exc()
         return {}
