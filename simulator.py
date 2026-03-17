@@ -13,7 +13,8 @@ def effective_box_conductivity(box, layers):
     """
     if layers is None or not hasattr(box, 'stackup') or not box.stackup:
         # Fallback logic
-        ...
+        if layers is None or not hasattr(box, 'stackup') or not box.stackup:
+            return 10.0
     
     try:
         stackup_specs = str(box.stackup).split(",")
