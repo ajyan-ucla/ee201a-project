@@ -193,7 +193,7 @@ def simulator_simulate(
     k_grid[:, :, :] = 0.026 # Initialize to air
     for box_idx, box in enumerate(all_boxes):
         mask = owner_grid == box_idx
-        k_grid[mask] = conductivity_values.get(box.material, 100)
+        k_grid[mask] = effective_box_conductivity(box, layers)
     
     # Fill power_grid
     if power_dict:
@@ -280,7 +280,7 @@ def simulator_simulate(
                 peak_temp = max(box_temps)
                 avg_temp = np.mean(box_temps)
                 
-                k_box = conductivity_values.get(box.material, 100)
+                k_box = effective_box_conductivity(box, layers)
 
                 # Thermal resistance calculation based on geometry and material conductivity
                 Rx = (box.width * 1e-3) / (k_box * box.length * 1e-3 * box.height * 1e-3)
